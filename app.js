@@ -1,6 +1,7 @@
 // app.js
 const PROXY_URL = CONFIG.PROXY_URL;
 const MAX_RESULTS = CONFIG.MAX_RESULTS || 20;
+const PLAYLIST_KEY = 'waie_playlist';
 
 let currentTrack = null;
 let queue = [];
@@ -10,8 +11,113 @@ let playerReady = false;
 let progressInterval = null;
 let shuffleMode = false;
 let repeatMode = false;
+let playlist = [];
+let playingFromPlaylist = false;
 
-// Load YouTube IFrame API
+// SVG icons (inline)
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
+  heart: '<svg viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>',
+  warning: '<svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  music: '<svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
+};
+
+// ============ PLAYLIST STORAGE ============
+function loadPlaylist() {
+  try {
+    const raw = localStorage.getItem(PLAYLIST_KEY);
+    playlist = raw ? JSON.parse(raw) : [];
+  } catch { playlist = []; }
+  updatePlaylistBadge();
+}
+
+function savePlaylist() {
+  try { localStorage.setItem(PLAYLIST_KEY, JSON.stringify(playlist)); } catch {}
+  updatePlaylistBadge();
+}
+
+function isInPlaylist(id) {
+  return playlist.some(t => t.id === id);
+}
+
+function toggleSave(id) {
+  if (isInPlaylist(id)) {
+    playlist = playlist.filter(t => t.id !== id);
+    showToast('Dibuang dari playlist', false, 'trash');
+  } else {
+    const track = queue.find(t => t.id === id);
+    if (!track) return;
+    playlist.unshift(track);
+    showToast('Ditambah ke playlist', false, 'heart');
+  }
+  savePlaylist();
+  renderPlaylist();
+  refreshSaveButtons();
+}
+
+function refreshSaveButtons() {
+  document.querySelectorAll('.track-btn.save').forEach(btn => {
+    const id = btn.dataset.id;
+    const saved = isInPlaylist(id);
+    btn.classList.toggle('saved', saved);
+    const svg = btn.querySelector('svg');
+    if (svg) svg.setAttribute('fill', saved ? 'currentColor' : 'none');
+  });
+}
+
+function updatePlaylistBadge() {
+  const badge = document.getElementById('playlistBadge');
+  if (!badge) return;
+  badge.textContent = playlist.length;
+  badge.classList.toggle('show', playlist.length > 0);
+}
+
+// ============ RENDER ============
+function renderPlaylist() {
+  const el = document.getElementById('playlistResults');
+  if (!el) return;
+
+  if (!playlist.length) {
+    el.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">${ICONS.heart}</div>
+        <p>Playlist masih kosong</p>
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = playlist.map((item, idx) => `
+    <div class="track" data-id="${item.id}">
+      <img class="track-thumb" src="${item.thumbnail}" loading="lazy" onclick="playFromPlaylist(${idx})">
+      <div class="track-info" onclick="playFromPlaylist(${idx})">
+        <div class="track-title">${escapeHtml(item.title)}</div>
+        <div class="track-channel">${escapeHtml(item.channel)}</div>
+      </div>
+      <div class="track-actions">
+        <button class="track-btn play" onclick="playFromPlaylist(${idx})">${ICONS.play}</button>
+        <button class="track-btn remove" onclick="removeFromPlaylist('${item.id}')">${ICONS.trash}</button>
+      </div>
+    </div>`).join('');
+}
+
+function removeFromPlaylist(id) {
+  playlist = playlist.filter(t => t.id !== id);
+  savePlaylist();
+  renderPlaylist();
+  refreshSaveButtons();
+  showToast('Dibuang dari playlist', false, 'trash');
+}
+
+function playFromPlaylist(idx) {
+  playingFromPlaylist = true;
+  queue = playlist.slice();
+  playTrack(idx);
+}
+
+// ============ YOUTUBE PLAYER ============
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 document.head.appendChild(tag);
@@ -31,10 +137,10 @@ function onPlayerStateChange(e) {
   const icon = document.getElementById('playIcon');
   if (!icon) return;
   if (e.data === YT.PlayerState.PLAYING) {
-    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+    icon.outerHTML = ICONS.pause.replace('<svg', '<svg id="playIcon"');
     startProgress();
   } else if (e.data === YT.PlayerState.PAUSED) {
-    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    icon.outerHTML = ICONS.play.replace('<svg', '<svg id="playIcon"');
     stopProgress();
   } else if (e.data === YT.PlayerState.ENDED) {
     stopProgress();
@@ -43,7 +149,7 @@ function onPlayerStateChange(e) {
   }
 }
 
-// Search
+// ============ SEARCH ============
 let searchTimer;
 document.getElementById('searchInput').addEventListener('input', function () {
   const q = this.value.trim();
@@ -61,7 +167,7 @@ function clearSearch() {
   document.getElementById('clearBtn').classList.remove('show');
   document.getElementById('results').innerHTML = `
     <div class="empty-state">
-      <div class="empty-icon">♪</div>
+      <div class="empty-icon">${ICONS.music}</div>
       <p>Cari lagu buat mulai</p>
     </div>`;
 }
@@ -94,17 +200,25 @@ async function search() {
       thumbnail: item.snippet.thumbnails.medium ? item.snippet.thumbnails.medium.url : item.snippet.thumbnails.default.url
     }));
 
-    results.innerHTML = queue.map((item, idx) => `
-      <div class="track" id="track-${idx}" onclick="playTrack(${idx})">
-        <img class="track-thumb" src="${item.thumbnail}" loading="lazy">
-        <div class="track-info">
+    playingFromPlaylist = false;
+
+    results.innerHTML = queue.map((item, idx) => {
+      const saved = isInPlaylist(item.id);
+      return `
+      <div class="track" id="track-${idx}" data-id="${item.id}">
+        <img class="track-thumb" src="${item.thumbnail}" loading="lazy" onclick="playTrack(${idx})">
+        <div class="track-info" onclick="playTrack(${idx})">
           <div class="track-title">${escapeHtml(item.title)}</div>
           <div class="track-channel">${escapeHtml(item.channel)}</div>
         </div>
-        <button class="track-play">
-          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        </button>
-      </div>`).join('');
+        <div class="track-actions">
+          <button class="track-btn save ${saved ? 'saved' : ''}" data-id="${item.id}" onclick="toggleSave('${item.id}')">
+            <svg viewBox="0 0 24 24" fill="${saved ? 'currentColor' : 'none'}"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          </button>
+          <button class="track-btn play" onclick="playTrack(${idx})">${ICONS.play}</button>
+        </div>
+      </div>`;
+    }).join('');
   } catch (e) {
     results.innerHTML = `<div class="empty-state"><p>Error: ${e.message}</p></div>`;
   }
@@ -116,12 +230,15 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+// ============ PLAYER ============
 function playTrack(idx) {
-  if (!playerReady) { showToast('Player belum ready', true); return; }
+  if (!playerReady) { showToast('Player belum ready', true, 'warning'); return; }
   queueIndex = idx;
   currentTrack = queue[idx];
 
-  document.querySelectorAll('.track').forEach((t, i) => t.classList.toggle('playing', i === idx));
+  document.querySelectorAll('.track').forEach(t => {
+    t.classList.toggle('playing', t.dataset.id === currentTrack.id);
+  });
 
   document.getElementById('playerThumb').src = currentTrack.thumbnail;
   document.getElementById('playerTitle').textContent = currentTrack.title;
@@ -129,7 +246,7 @@ function playTrack(idx) {
   document.getElementById('playerBar').classList.add('show');
 
   ytPlayer.loadVideoById(currentTrack.id);
-  showToast('▶ ' + currentTrack.title.substring(0, 30) + '...');
+  showToast('Memutar: ' + currentTrack.title.substring(0, 30) + '...', false, 'play');
 }
 
 function togglePlay() {
@@ -190,15 +307,17 @@ function seek(e) {
   ytPlayer.seekTo(pct * (ytPlayer.getDuration() || 0));
 }
 
-function showToast(msg, isErr) {
+function showToast(msg, isErr, icon) {
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  const ic = icon && ICONS[icon] ? ICONS[icon] : '';
+  t.innerHTML = ic + '<span>' + msg + '</span>';
   t.classList.toggle('error', !!isErr);
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-// Bottom nav interaction
+// ============ BOTTOM NAV ============
 function switchTab(el) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   el.classList.add('active');
@@ -206,7 +325,6 @@ function switchTab(el) {
   void el.offsetWidth;
   el.classList.add('tapped');
 
-  // Ripple effect
   const ripple = document.createElement('span');
   ripple.className = 'ripple';
   const rect = el.getBoundingClientRect();
@@ -217,13 +335,14 @@ function switchTab(el) {
   el.appendChild(ripple);
   setTimeout(() => ripple.remove(), 600);
 
-  // Handle tab switch logic
   const tab = el.dataset.tab;
-  if (tab === 'search') {
-    document.querySelector('.container').style.display = 'block';
-  } else if (tab === 'library') {
-    showToast('Library belum tersedia');
-  } else if (tab === 'profile') {
-    showToast('Profile belum tersedia');
-  }
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  const target = document.getElementById('tab-' + tab);
+  if (target) target.classList.add('active');
+
+  if (tab === 'playlist') renderPlaylist();
 }
+
+// ============ INIT ============
+loadPlaylist();
+renderPlaylist(); 
