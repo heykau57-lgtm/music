@@ -196,4 +196,34 @@ function showToast(msg, isErr) {
   t.classList.toggle('error', !!isErr);
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
-                                   }
+}
+
+// Bottom nav interaction
+function switchTab(el) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  el.classList.add('active');
+  el.classList.remove('tapped');
+  void el.offsetWidth;
+  el.classList.add('tapped');
+
+  // Ripple effect
+  const ripple = document.createElement('span');
+  ripple.className = 'ripple';
+  const rect = el.getBoundingClientRect();
+  const size = Math.max(rect.width, rect.height);
+  ripple.style.width = ripple.style.height = size + 'px';
+  ripple.style.left = (rect.width / 2 - size / 2) + 'px';
+  ripple.style.top = (rect.height / 2 - size / 2) + 'px';
+  el.appendChild(ripple);
+  setTimeout(() => ripple.remove(), 600);
+
+  // Handle tab switch logic
+  const tab = el.dataset.tab;
+  if (tab === 'search') {
+    document.querySelector('.container').style.display = 'block';
+  } else if (tab === 'library') {
+    showToast('Library belum tersedia');
+  } else if (tab === 'profile') {
+    showToast('Profile belum tersedia');
+  }
+}
