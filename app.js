@@ -1,7 +1,6 @@
 // app.js
-const API_KEY = CONFIG.YT_API_KEY;
+const PROXY_URL = CONFIG.PROXY_URL;
 const MAX_RESULTS = CONFIG.MAX_RESULTS || 20;
-const YT_API = 'https://www.googleapis.com/youtube/v3';
 
 let currentTrack = null;
 let queue = [];
@@ -12,6 +11,7 @@ let progressInterval = null;
 let shuffleMode = false;
 let repeatMode = false;
 
+// Load YouTube IFrame API
 const tag = document.createElement('script');
 tag.src = "https://www.youtube.com/iframe_api";
 document.head.appendChild(tag);
@@ -31,10 +31,10 @@ function onPlayerStateChange(e) {
   const icon = document.getElementById('playIcon');
   if (!icon) return;
   if (e.data === YT.PlayerState.PLAYING) {
-    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
     startProgress();
   } else if (e.data === YT.PlayerState.PAUSED) {
-    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    icon.outerHTML = '<svg id="playIcon" viewBox="0 0 24 24" style="fill:currentColor;stroke:none;"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
     stopProgress();
   } else if (e.data === YT.PlayerState.ENDED) {
     stopProgress();
@@ -43,6 +43,7 @@ function onPlayerStateChange(e) {
   }
 }
 
+// Search
 let searchTimer;
 document.getElementById('searchInput').addEventListener('input', function () {
   const q = this.value.trim();
@@ -73,15 +74,15 @@ async function search() {
   results.innerHTML = '<div class="loading-state"><div class="spinner"></div><p>Mencari...</p></div>';
 
   try {
-    const url = `${YT_API}/search?part=snippet&type=video&videoCategoryId=10&maxResults=${MAX_RESULTS}&q=${encodeURIComponent(q)}&key=${API_KEY}`;
+    const url = PROXY_URL + '/?q=' + encodeURIComponent(q);
     const res = await fetch(url);
     const data = await res.json();
 
     if (data.error) {
-      results.innerHTML = `<div class="empty-state"><p>Error: ${data.error.message}</p></div>`;
+      results.innerHTML = `<div class="empty-state"><p>Error: ${data.error.message || data.error}</p></div>`;
       return;
     }
-    if (!data.items?.length) {
+    if (!data.items || !data.items.length) {
       results.innerHTML = '<div class="empty-state"><p>Tiada hasil</p></div>';
       return;
     }
@@ -90,12 +91,12 @@ async function search() {
       id: item.id.videoId,
       title: item.snippet.title,
       channel: item.snippet.channelTitle,
-      thumbnail: item.snippet.thumbnails.medium?.url || item.snippet.thumbnails.default.url
+      thumbnail: item.snippet.thumbnails.medium ? item.snippet.thumbnails.medium.url : item.snippet.thumbnails.default.url
     }));
 
     results.innerHTML = queue.map((item, idx) => `
       <div class="track" id="track-${idx}" onclick="playTrack(${idx})">
-        <img class="track-thumb" src="${item.thumbnail}">
+        <img class="track-thumb" src="${item.thumbnail}" loading="lazy">
         <div class="track-info">
           <div class="track-title">${escapeHtml(item.title)}</div>
           <div class="track-channel">${escapeHtml(item.channel)}</div>
@@ -179,7 +180,7 @@ function stopProgress() { if (progressInterval) clearInterval(progressInterval);
 
 function fmt(s) {
   s = Math.floor(s);
-  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  return Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
 }
 
 function seek(e) {
@@ -189,10 +190,10 @@ function seek(e) {
   ytPlayer.seekTo(pct * (ytPlayer.getDuration() || 0));
 }
 
-function showToast(msg, isErr = false) {
+function showToast(msg, isErr) {
   const t = document.getElementById('toast');
   t.textContent = msg;
-  t.classList.toggle('error', isErr);
+  t.classList.toggle('error', !!isErr);
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
-      } 
+                                   }
